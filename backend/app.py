@@ -29,6 +29,7 @@ LABELS_PATH = os.path.join(MODELS_DIR, "labels.json")
 
 yield_model = None
 health_model = None
+health_input_size = (128, 128)  # (width, height) default
 health_labels = None
 
 
@@ -37,17 +38,45 @@ def _load_yield_model():
     if os.path.exists(YIELD_MODEL_PATH) and joblib is not None:
         try:
             yield_model = joblib.load(YIELD_MODEL_PATH)
+            print(f"[models] loaded yield model: {YIELD_MODEL_PATH}")
         except Exception:
             yield_model = None
+            print(f"[models] failed to load yield model from {YIELD_MODEL_PATH}")
+    else:
+        if not os.path.exists(YIELD_MODEL_PATH):
+            print(f"[models] yield model file missing: {YIELD_MODEL_PATH}")
+        if joblib is None:
+            print("[models] joblib not available; yield model cannot be loaded")
 
 
 def _load_health_model():
-    global health_model
+    global health_model, health_input_size
     if os.path.exists(HEALTH_MODEL_PATH) and load_model is not None:
         try:
             health_model = load_model(HEALTH_MODEL_PATH)
+            print(f"[models] loaded health model: {HEALTH_MODEL_PATH}")
+            # Try to infer input size from model
+            try:
+                ishape = getattr(health_model, "input_shape", None)
+                if isinstance(ishape, (list, tuple)) and len(ishape) >= 3:
+                    # Expect (None, H, W, C) or (H, W, C)
+                    if len(ishape) == 4:
+                        h, w = ishape[1], ishape[2]
+                    else:
+                        h, w = ishape[0], ishape[1]
+                    if isinstance(h, int) and isinstance(w, int):
+                        health_input_size = (w, h)
+                        print(f"[models] inferred input size: {health_input_size}")
+            except Exception:
+                pass
         except Exception:
             health_model = None
+            print(f"[models] failed to load health model from {HEALTH_MODEL_PATH}")
+    else:
+        if not os.path.exists(HEALTH_MODEL_PATH):
+            print(f"[models] health model file missing: {HEALTH_MODEL_PATH}")
+        if load_model is None:
+            print("[models] tensorflow/keras not available; health model cannot be loaded")
 
 
 def _load_health_labels():
@@ -68,8 +97,13 @@ def _load_health_labels():
                         health_labels = None
                 else:
                     health_labels = None
+            if health_labels is not None:
+                print(f"[models] loaded health labels: {LABELS_PATH} (n={len(health_labels)})")
         except Exception:
             health_labels = None
+            print(f"[models] failed to load labels from {LABELS_PATH}")
+    else:
+        print(f"[models] labels file missing: {LABELS_PATH}")
 
 
 _load_yield_model()
@@ -84,6 +118,9 @@ def health():
         "yield_model_loaded": bool(yield_model),
         "health_model_loaded": bool(health_model),
         "health_labels_loaded": bool(health_labels),
+        "yield_model_file_exists": os.path.exists(YIELD_MODEL_PATH),
+        "health_model_file_exists": os.path.exists(HEALTH_MODEL_PATH),
+        "labels_file_exists": os.path.exists(LABELS_PATH),
     })
 
 
@@ -118,7 +155,8 @@ def predict_yield():
         return jsonify({"error": f"Prediction failed: {str(e)}"}), 500
 
 
-@app.route("/api/predict-health", methods=["POST"])
+@app.route("/api/predict", methods=["POST"])  # unified endpoint
+@app.route("/api/predict-health", methods=["POST"])  # backward compatibility
 def predict_health():
     if health_model is None:
         return jsonify({"error": "Health model not available. Place model at 'backend/models/crop_health_model.h5'."}), 503
@@ -130,7 +168,8 @@ def predict_health():
     try:
         img_bytes = file.read()
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-        img = img.resize((128, 128))
+        # Resize to the loaded model's expected input size (default 128x128)
+        img = img.resize(health_input_size)
         arr = np.asarray(img, dtype=np.float32) / 255.0
         arr = np.expand_dims(arr, axis=0)
 
@@ -157,3 +196,14 @@ def predict_health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port)
+
+@app.route("/admin/reload-models", methods=["POST"]) 
+def admin_reload_models():
+    _load_yield_model()
+    _load_health_model()
+    _load_health_labels()
+    return jsonify({
+        "yield_model_loaded": bool(yield_model),
+        "health_model_loaded": bool(health_model),
+        "health_labels_loaded": bool(health_labels)
+    })

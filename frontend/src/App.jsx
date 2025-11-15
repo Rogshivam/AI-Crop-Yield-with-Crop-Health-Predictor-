@@ -21,7 +21,11 @@ export default function App() {
   const reportRef = useRef(null)
 
   useEffect(() => {
-    axios.get('/health').then(r => setServerHealth(r.data)).catch(() => setServerHealth(null))
+    let active = true
+    const fetchHealth = () => axios.get('/health').then(r => active && setServerHealth(r.data)).catch(() => active && setServerHealth(null))
+    fetchHealth()
+    const id = setInterval(fetchHealth, 5000)
+    return () => { active = false; clearInterval(id) }
   }, [])
 
   const startCamera = async () => {
@@ -83,7 +87,7 @@ export default function App() {
     try {
       const form = new FormData()
       form.append('image', selectedFile)
-      const res = await axios.post('/api/predict-health', form, { headers: { 'Content-Type': 'multipart/form-data' } })
+      const res = await axios.post('/api/predict', form, { headers: { 'Content-Type': 'multipart/form-data' } })
       const now = new Date().toISOString()
       setResult({ ...res.data, timestamp: now })
     } catch (e) {
@@ -114,6 +118,8 @@ export default function App() {
     setResult(null)
     setError('')
   }
+
+  // (yield flow removed)
 
   const statusBadge = (ok) => (
     <span style={{ padding: '2px 8px', borderRadius: 999, background: ok ? '#e7f6e7' : '#fde8e8', color: ok ? '#166534' : '#991b1b', fontSize: 12 }}>
@@ -158,7 +164,7 @@ export default function App() {
               </div>
             </div>
             <div style={{ display: 'flex', gap: 12, marginTop: 12 }}>
-              <button onClick={predict} disabled={loading || !selectedFile} style={{ background: selectedFile ? '#0ea5e9' : '#9ca3af', color: '#fff', padding: '8px 12px', borderRadius: 6, border: 'none' }}>{loading ? 'Predicting...' : 'Predict'}</button>
+              <button onClick={predict} disabled={loading || !selectedFile || !serverHealth?.health_model_loaded || !serverHealth?.health_labels_loaded} style={{ background: selectedFile && serverHealth?.health_model_loaded && serverHealth?.health_labels_loaded ? '#0ea5e9' : '#9ca3af', color: '#fff', padding: '8px 12px', borderRadius: 6, border: 'none' }}>{loading ? 'Predicting...' : 'Predict'}</button>
               <button onClick={reset} style={{ background: '#6b7280', color: '#fff', padding: '8px 12px', borderRadius: 6, border: 'none' }}>Reset</button>
             </div>
             {error && <div style={{ color: '#b91c1c', marginTop: 8 }}>{error}</div>}
@@ -177,7 +183,12 @@ export default function App() {
                   <div>
                     <div style={{ marginBottom: 6 }}><strong>Label Name:</strong> {result.label_name ?? 'N/A'}</div>
                     <div style={{ marginBottom: 6 }}><strong>Label Index:</strong> {result.label}</div>
-                    <div style={{ marginBottom: 6 }}><strong>Confidence:</strong> {(result.confidence * 100).toFixed(2)}%</div>
+                    <div style={{ marginBottom: 6 }}>
+                      <strong>Confidence:</strong> {(result.confidence * 100).toFixed(2)}%
+                      <div style={{ height: 8, background: '#e5e7eb', borderRadius: 999, marginTop: 6 }}>
+                        <div style={{ width: `${Math.max(0, Math.min(100, result.confidence * 100)).toFixed(1)}%`, height: '100%', background: '#16a34a', borderRadius: 999 }} />
+                      </div>
+                    </div>
                     <div style={{ marginBottom: 6 }}><strong>Timestamp:</strong> {new Date(result.timestamp).toLocaleString()}</div>
                     <div style={{ marginTop: 10 }}>
                       <div style={{ fontWeight: 700, marginBottom: 4 }}>Notes</div>
@@ -197,6 +208,8 @@ export default function App() {
             <button onClick={downloadPdf} disabled={!result} style={{ background: result ? '#16a34a' : '#9ca3af', color: '#fff', padding: '8px 12px', borderRadius: 6, border: 'none' }}>Download Report (PDF)</button>
           </div>
         </div>
+
+        {/* Yield panel removed as requested */}
       </div>
     </div>
   )

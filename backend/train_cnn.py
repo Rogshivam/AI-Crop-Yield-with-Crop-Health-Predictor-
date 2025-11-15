@@ -131,7 +131,7 @@ def main():
 
     img_size = (128, 128)
     batch_size = 32
-    epochs = 10
+    epochs = 2
 
     train_ds, val_ds, class_names = build_datasets(img_size=img_size, batch_size=batch_size)
 

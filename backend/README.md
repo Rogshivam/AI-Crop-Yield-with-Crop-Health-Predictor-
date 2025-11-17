@@ -1,22 +1,23 @@
 # Backend (Flask) – Setup and Usage
 
-This backend serves two endpoints:
-- `POST /api/predict-health` – Classify leaf image via CNN model
-- `POST /api/predict-yield` – Predict yield via scikit-learn model
-- `GET /health` – Service/model status
+Service endpoints:
+- `POST /api/predict` – Classify an image using the CNN model (also available as `/api/predict-health` for backward compatibility)
+- `GET /health` – Returns API and model/labels status flags
+- `POST /admin/reload-models` – Reload models/labels from disk without restarting the server
 
 ## 1) Prerequisites
 - Python 3.10+ recommended
-- Kaggle account (for training CNN)
+- CPU is fine; GPU not required
+- Optional: Kaggle account only if you want to train on PlantVillage
 
 ## 2) Environment variables
 Copy `.env.sample` to `.env` and adjust values if needed.
 ```
 PORT=8000
-KAGGLE_USERNAME=
-KAGGLE_KEY=
 ```
-You may also put `kaggle.json` in your user profile (Windows: `%USERPROFILE%\.kaggle\kaggle.json`, WSL/Linux: `~/.kaggle/kaggle.json`).
+If you train with Kaggle later, place `kaggle.json` at:
+- Windows: `%USERPROFILE%\.kaggle\kaggle.json`
+- WSL/Linux: `~/.kaggle/kaggle.json` (run `chmod 600 ~/.kaggle/kaggle.json`)
 
 ## 3) Create a virtual environment
 Pick ONE path depending on your shell/OS.
@@ -41,6 +42,7 @@ python -m pip install --upgrade pip
 If you see an "externally managed" or PEP 668 error, you are using system Python without an active venv. Activate the venv and use its pip, e.g. `python -m pip install ...`.
 
 ## 4) Install dependencies
+From the project root or from `backend/`:
 ```bash
 python -m pip install -r backend/requirements.txt
 ```
@@ -56,7 +58,7 @@ python -m pip install --default-timeout=120 --no-cache-dir -r backend/requiremen
 python -m pip install --break-system-packages -r backend/requirements.txt
 ```
 
-Optional: On CPU-only machines, installing `tensorflow-cpu==2.12.0` can be faster than full `tensorflow`.
+Note: This project uses the CPU build of TensorFlow by default.
 
 ### WSL/Linux troubleshooting (venv/pip hangs)
 - If venv creation was interrupted (KeyboardInterrupt), delete and recreate it:
@@ -71,24 +73,56 @@ python -m pip install --default-timeout=120 --no-cache-dir -r backend/requiremen
 ```
 - If you are working under a Windows-mounted path like `/mnt/c/...`, installs can be slow. Consider cloning the repo into your Linux home directory (e.g., `~/projects/...`) for better performance.
 
-## 5) Datasets: Kaggle vs KaggleHub
+## 5) Models and datasets – two easy paths
 
-- Yield dataset can be fetched without API keys using KaggleHub:
+Pick ONE path to obtain a working CNN model + labels.
+
+### Path A – Quick local model (NO Kaggle)
+Train a small CNN on CIFAR‑10. Data is downloaded automatically by Keras.
 ```bash
-python backend/download_yield_dataset.py
+cd backend
+# Use your venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install --no-cache-dir "tensorflow-cpu>=2.20,<2.21" numpy pillow
+
+# Train fast (set EPOCHS=1..3)
+EPOCHS=2 python train_classifier.py
 ```
-It will copy files into `backend/data/yield/`.
+Outputs (created under `backend/models/`):
+- `crop_health_model.h5`
+- `labels.json` (CIFAR‑10 class names)
 
-- CNN PlantVillage dataset download and training uses the Kaggle API (requires API key or `kaggle.json`).
-
-## 6) Train the CNN from Kaggle (optional)
-This downloads PlantVillage, trains, and saves the model/labels into `backend/models/`.
+### Path B – PlantVillage (Kaggle)
+Use the Kaggle API to download the PlantVillage dataset and train a CNN.
 ```bash
-python backend/train_cnn.py
+# One-time Kaggle setup
+mkdir -p ~/.kaggle
+cp /path/to/kaggle.json ~/.kaggle/kaggle.json
+chmod 600 ~/.kaggle/kaggle.json
+
+cd backend
+source .venv/bin/activate
+python -m pip install --no-cache-dir kaggle tqdm "tensorflow-cpu>=2.20,<2.21" numpy pillow
+python train_cnn.py   # downloads data, trains, saves best model
 ```
-Outputs:
-- `backend/models/crop_health_model.h5`
-- `backend/models/labels.json`
+Outputs (created under `backend/models/`):
+- `crop_health_model.h5`
+- `labels.json` (PlantVillage class names)
+
+Dataset folders used by the trainer (auto-managed):
+- `backend/data/raw` – downloaded zip(s)
+- `backend/data/plantvillage` – extracted images
+
+## 6) Optional – Yield model
+If you also need a numeric yield predictor, a simple regression trainer is available:
+```bash
+cd backend
+python -m pip install --no-cache-dir joblib numpy kagglehub
+python train_yield_model.py
+```
+Output:
+- `backend/models/yield_model.pkl`
 
 ## 7) Run the API
 ```bash
@@ -100,12 +134,27 @@ Health:
 ```bash
 curl http://localhost:8000/health
 ```
+You should see flags such as:
+```
+{
+  "status": "ok",
+  "health_model_loaded": true,
+  "health_labels_loaded": true,
+  "health_model_file_exists": true,
+  "labels_file_exists": true
+}
+```
 
-## 8) Models
-Place exported models in `backend/models/`:
-- `yield_model.pkl`
-- `crop_health_model.h5`
-- `labels.json` (optional, for human-readable names)
+Reload models without restart:
+```bash
+curl -X POST http://localhost:8000/admin/reload-models
+```
+
+## 8) Model file locations
+Place files under `backend/models/` (when you’re cd’ed into `backend/`, that is `models/`):
+- `crop_health_model.h5` (required for image prediction)
+- `labels.json` (recommended; used to map label indices to names)
+- `yield_model.pkl` (optional; only if you use `/api/predict-yield`)
 
 ## 9) Secrets and safety
 - Do not commit API keys into the repository. Prefer using user-profile `kaggle.json` or shell environment variables.
